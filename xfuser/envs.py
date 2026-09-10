@@ -120,6 +120,18 @@ def _get_overridden_device_type() -> Optional[str]:
 def get_device_type() -> str:
     forced = _get_overridden_device_type()
     if forced is not None:
+        if forced == "cpu":
+            return forced
+        if forced == "cuda" and not (_is_cuda() or _is_hip()):
+            raise RuntimeError("XDIT_DEVICE=cuda is set but CUDA is not available")
+        if forced == "xpu" and not _is_xpu():
+            raise RuntimeError("XDIT_DEVICE=xpu is set but XPU is not available")
+        if forced == "musa" and not _is_musa():
+            raise RuntimeError("XDIT_DEVICE=musa is set but MUSA is not available")
+        if forced == "npu" and not _is_npu():
+            raise RuntimeError("XDIT_DEVICE=npu is set but NPU is not available")
+        if forced == "mps" and not _is_mps():
+            raise RuntimeError("XDIT_DEVICE=mps is set but MPS is not available")
         return forced
     if _is_cuda() or _is_hip():
         return "cuda"
@@ -249,11 +261,7 @@ def get_distributed_backend() -> str:
     elif device_type == "musa":
         return "mccl"
     elif device_type == "xpu":
-        if hasattr(torch.distributed, "Backend") and hasattr(
-            torch.distributed.Backend, "XCCL"
-        ):
-            return "xccl"
-        return "ccl"
+        return (os.environ.get("XDIT_XPU_BACKEND") or "ccl").strip().lower()
     elif device_type == "mps":
         return "gloo"
     elif device_type == "npu":

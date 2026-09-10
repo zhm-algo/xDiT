@@ -65,7 +65,7 @@ def main():
         output_type=input_config.output_type,
         max_sequence_length=input_config.max_sequence_length,
         guidance_scale=input_config.guidance_scale,
-        generator=torch.Generator(device=envs.get_device_name()).manual_seed(input_config.seed),
+        generator=torch.Generator(device=str(envs.get_device(local_rank))).manual_seed(input_config.seed),
     )
     end_time = time.time()
     elapsed_time = end_time - start_time
