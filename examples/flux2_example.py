@@ -5,6 +5,7 @@ import time
 import torch
 
 from xfuser import xFuserArgs, xFuserFlux2Pipeline, xFuserFlux2KleinPipeline
+import xfuser.envs as envs
 from xfuser.config import FlexibleArgumentParser
 from xfuser.core.distributed import (
     get_world_group,
@@ -49,12 +50,12 @@ def main():
         pipe.enable_sequential_cpu_offload(gpu_id=local_rank)
         logging.info(f"rank {local_rank} sequential CPU offload enabled")
     else:
-        pipe = pipe.to(f"cuda:{local_rank}")
+        pipe = pipe.to(envs.get_device(local_rank))
 
-    parameter_peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
+    parameter_peak_memory = envs.max_memory_allocated(device=envs.get_device(local_rank))
     pipe.prepare_run(input_config)
 
-    torch.cuda.reset_peak_memory_stats()
+    envs.reset_peak_memory_stats(device=envs.get_device(local_rank))
     start_time = time.time()
     output = pipe(
         height=input_config.height,
@@ -64,11 +65,11 @@ def main():
         output_type=input_config.output_type,
         max_sequence_length=input_config.max_sequence_length,
         guidance_scale=input_config.guidance_scale,
-        generator=torch.Generator(device="cuda").manual_seed(input_config.seed),
+        generator=torch.Generator(device=envs.get_device_name()).manual_seed(input_config.seed),
     )
     end_time = time.time()
     elapsed_time = end_time - start_time
-    peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
+    peak_memory = envs.max_memory_allocated(device=envs.get_device(local_rank))
 
     parallel_info = (
         f"dp{engine_args.data_parallel_degree}_cfg{engine_config.parallel_config.cfg_degree}_"

@@ -6,12 +6,12 @@ import torch.distributed
 
 import xfuser.envs as envs
 
-if torch.cuda.is_available() or envs._is_npu():
+if torch.cuda.is_available() or envs._is_npu() or envs._is_xpu():
     from yunchang import LongContextAttention
     try:
         from yunchang.kernels import AttnType
     except ImportError:
-        raise ImportError("Please install yunchang 0.6.0 or later")
+        AttnType = None
 
     from yunchang.comm.all_to_all import SeqAllToAll4D
     from yunchang.globals import HAS_SPARSE_SAGE_ATTENTION
@@ -60,7 +60,7 @@ class xFuserLongContextAttention(LongContextAttention):
 
         # A workaround to allow running xDiT without having yunchang installed
         # while still supporting AttnType.FA as the default value for legacy reasons
-        if attn_type is None:
+        if attn_type is None and AttnType is not None:
             attn_type = AttnType.FA
 
         super().__init__(
@@ -89,7 +89,7 @@ class xFuserLongContextAttention(LongContextAttention):
                 raise RuntimeError("Sparse Sage attention does not support ring degree > 1.")
 
         self.attn_processor = attn_processor
-        if attn_type == AttnType.NPU:
+        if AttnType is not None and attn_type == AttnType.NPU:
             from xfuser.core.long_ctx_attention.ring import xdit_ring_npu_flash_attn_func
             self.ring_attn_fn = xdit_ring_npu_flash_attn_func
         else:

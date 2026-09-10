@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
+import xfuser.envs as envs
 from xfuser.config.config import EngineConfig, InputConfig,ParallelConfig
 from xfuser.core.distributed import (
     init_distributed_environment,
@@ -72,7 +73,7 @@ class DiTWorker(WorkerBase):
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             engine_config=engine_config,
             **kwargs
-        ).to(f"cuda:{local_rank}")
+        ).to(envs.get_device(local_rank))
         self.pipe = pipe
         return
     
@@ -108,7 +109,11 @@ class VAEWorker(WorkerBase):
             rank=self.rank,
             world_size=self.parallel_config.world_size,
         )
-        init_vae_group(self.parallel_config.dit_parallel_size, self.parallel_config.vae_parallel_size, torch.distributed.Backend.NCCL)
+        init_vae_group(
+            self.parallel_config.dit_parallel_size,
+            self.parallel_config.vae_parallel_size,
+            envs.get_distributed_backend(),
+        )
         
     def from_pretrained(
         self,
@@ -131,7 +136,7 @@ class VAEWorker(WorkerBase):
             return_org_pipeline=True,
             **kwargs
         ).to("cpu")
-        vae = getattr(pipe, "vae", None).to(f"cuda:{local_rank}")
+        vae = getattr(pipe, "vae", None).to(envs.get_device(local_rank))
         
         self.vae = xFuserVAEWrapper(
             vae,

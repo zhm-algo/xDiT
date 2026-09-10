@@ -464,7 +464,7 @@ def flydsl_fused_qk_norm_rope(
     if not (_norm_is_plain_rmsnorm(norm_q) and _norm_is_plain_rmsnorm(norm_k)):
         return _ref()
 
-    if not query.is_cuda or query.dim() != 4:
+    if query.device.type != "cuda" or query.dim() != 4:
         return _ref()
     if query.shape != key.shape or query.dtype != key.dtype:
         return _ref()

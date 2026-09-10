@@ -1089,7 +1089,7 @@ def _validate_aiter_mha_v4_request(dropout_p, is_causal):
 def _use_aiter_mha_v4_fp8(query, is_causal):
     return (
         _AITER_MHA_V4.enabled
-        and query.is_cuda
+        and query.device.type == "cuda"
         and query.shape[-1] == 128
         and not is_causal
     )

@@ -7,7 +7,6 @@ from typing import List, Optional
 
 import torch
 import torch.distributed
-from torch.cuda import set_device, device_count
 import xfuser.envs as envs
 from xfuser.logger import init_logger
 from .group_coordinator import (
@@ -15,17 +14,6 @@ from .group_coordinator import (
     PipelineGroupCoordinator,
     SequenceParallelGroupCoordinator,
 )
-
-try:
-    import torch_musa
-    from torch_musa.core.device import set_device, device_count
-except ModuleNotFoundError:
-    pass
-
-try:
-    from torch.npu import set_device, device_count
-except ModuleNotFoundError:
-    pass
 
 from .utils import RankGenerator
 
@@ -267,8 +255,8 @@ def init_distributed_environment(
     # to the correct device. Passing device_id= to init_process_group()
     # instead causes NCCL to use device-side rendezvous, which breaks
     # new_group() calls used by pipefusion and ulysses (NCCL Error 1).
-    if envs.get_device_name() in ["cuda", "musa", "npu"]:
-        set_device(local_rank)
+    if envs.get_device_name() in ["cuda", "xpu", "musa", "npu"]:
+        envs.set_device(local_rank)
     if not torch.distributed.is_initialized():
         assert distributed_init_method is not None, (
             "distributed_init_method must be provided when initializing "
