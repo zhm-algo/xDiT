@@ -3,8 +3,9 @@ import torch
 from torch.nn import functional as F
 
 import torch.distributed._functional_collectives as ft_c
+import xfuser.envs as envs
 
-if torch.cuda.is_available():
+if torch.cuda.is_available() or envs._is_npu() or envs._is_xpu():
     from yunchang.globals import PROCESS_GROUP
     from yunchang.ring.ring_flash_attn import ring_flash_attn_forward
     from yunchang.ring.ring_pytorch_attn import ring_pytorch_attn_func

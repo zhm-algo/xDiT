@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 import diffusers
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
@@ -62,6 +63,8 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     #       quantise and broadcast work, at the cost of a second shard resident.
     # These are reclaimable file-backed pages that the fill drops as it finishes each shard.
     "XDIT_WARM_SHARDS": lambda: os.environ.get("XDIT_WARM_SHARDS", "2"),
+    # force device type selection: cuda/xpu/cpu/musa/mps/npu
+    "XDIT_DEVICE": lambda: os.environ.get("XDIT_DEVICE", "").lower().strip() or None,
 }
 
 
@@ -95,64 +98,179 @@ def _is_npu():
         return False
 
 
-def get_device(local_rank: int) -> torch.device:
+def _is_xpu():
+    try:
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return True
+    except ModuleNotFoundError:
+        return False
+    return False
+
+
+def _get_overridden_device_type() -> Optional[str]:
+    forced = (os.environ.get("XDIT_DEVICE") or "").strip().lower()
+    if not forced:
+        return None
+    if forced not in {"cuda", "xpu", "cpu", "musa", "mps", "npu"}:
+        logger.warning("Ignoring unsupported XDIT_DEVICE=%s", forced)
+        return None
+    return forced
+
+
+def get_device_type() -> str:
+    forced = _get_overridden_device_type()
+    if forced is not None:
+        if forced == "cpu":
+            return forced
+        if forced == "cuda" and not (_is_cuda() or _is_hip()):
+            raise RuntimeError("XDIT_DEVICE=cuda is set but CUDA is not available")
+        if forced == "xpu" and not _is_xpu():
+            raise RuntimeError("XDIT_DEVICE=xpu is set but XPU is not available")
+        if forced == "musa" and not _is_musa():
+            raise RuntimeError("XDIT_DEVICE=musa is set but MUSA is not available")
+        if forced == "npu" and not _is_npu():
+            raise RuntimeError("XDIT_DEVICE=npu is set but NPU is not available")
+        if forced == "mps" and not _is_mps():
+            raise RuntimeError("XDIT_DEVICE=mps is set but MPS is not available")
+        return forced
     if _is_cuda() or _is_hip():
-        return torch.device("cuda", local_rank)
+        return "cuda"
     elif _is_musa():
-        return torch.device("musa", local_rank)
+        return "musa"
+    elif _is_xpu():
+        return "xpu"
     elif _is_mps():
-        return torch.device("mps")
+        return "mps"
     elif _is_npu():
-        return torch.device("npu", local_rank)
+        return "npu"
+    return "cpu"
+
+
+def get_device(local_rank: Optional[int] = None) -> torch.device:
+    device_type = get_device_type()
+    if device_type in {"cuda", "musa", "xpu", "npu"}:
+        return torch.device(device_type, 0 if local_rank is None else local_rank)
+    elif device_type == "mps":
+        return torch.device("mps")
     else:
         return torch.device("cpu")
 
 
 def get_device_name() -> str:
-    if _is_cuda() or _is_hip():
-        return "cuda"
-    elif _is_musa():
-        return "musa"
-    elif _is_mps():
-        return "mps"
-    elif _is_npu():
-        return "npu"
-    else:
-        return "cpu"
+    return get_device_type()
+
+
+def get_torch_device_module():
+    device_type = get_device_type()
+    if device_type == "cuda":
+        return torch.cuda
+    if device_type == "xpu":
+        return getattr(torch, "xpu", None)
+    if device_type == "musa":
+        return getattr(torch, "musa", None)
+    if device_type == "npu":
+        return getattr(torch, "npu", None)
+    return None
+
+
+def get_device_count() -> int:
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "device_count"):
+        return module.device_count()
+    return 0
+
+
+def set_device(device_index: int) -> None:
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "set_device"):
+        module.set_device(device_index)
+
+
+def synchronize(device: Optional[torch.device] = None) -> None:
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "synchronize"):
+        module.synchronize(device=device)
+
+
+def empty_cache() -> None:
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "empty_cache"):
+        module.empty_cache()
+
+
+def max_memory_allocated(device=None) -> int:
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "max_memory_allocated"):
+        return module.max_memory_allocated(device=device)
+    return 0
+
+
+def reset_peak_memory_stats(device=None) -> None:
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "reset_peak_memory_stats"):
+        module.reset_peak_memory_stats(device=device)
+
+
+class _CPUEvent:
+    def __init__(self, enable_timing: bool = True):
+        self.enable_timing = enable_timing
+        self._t = None
+
+    def record(self):
+        if self.enable_timing:
+            self._t = time.perf_counter()
+
+    def synchronize(self):
+        return None
+
+    def elapsed_time(self, end_event: "_CPUEvent") -> float:
+        if self._t is None or end_event._t is None:
+            return 0.0
+        return (end_event._t - self._t) * 1000.0
+
+
+def get_device_event_class():
+    module = get_torch_device_module()
+    if module is not None and hasattr(module, "Event"):
+        return module.Event
+    return _CPUEvent
 
 
 def get_device_version():
-    if _is_hip():
-        hip_version = torch.version.hip
-        hip_version = hip_version.split("-")[0]
-        return hip_version
-    elif _is_cuda():
+    device_type = get_device_type()
+    if device_type == "cuda":
+        if _is_hip():
+            hip_version = torch.version.hip
+            return hip_version.split("-")[0]
         return torch.version.cuda
-    elif _is_musa():
+    elif device_type == "musa":
         return torch.version.musa
-    elif _is_mps():
+    elif device_type == "xpu":
+        return getattr(torch.version, "xpu", None)
+    elif device_type in {"mps", "npu", "cpu"}:
         return None
-    elif _is_npu():
-        return None
-    else:
-        raise NotImplementedError(
-            "No Accelerators(AMD/NV/MTT GPU, AMD MI instinct accelerators) available"
-        )
+    raise NotImplementedError(
+        "No supported accelerator available"
+    )
+
+
+def get_distributed_backend() -> str:
+    device_type = get_device_type()
+    if device_type == "cuda":
+        return "nccl"
+    elif device_type == "musa":
+        return "mccl"
+    elif device_type == "xpu":
+        return (os.environ.get("XDIT_XPU_BACKEND") or "ccl").strip().lower()
+    elif device_type == "mps":
+        return "gloo"
+    elif device_type == "npu":
+        return "hccl"
+    return "gloo"
 
 
 def get_torch_distributed_backend() -> str:
-    if _is_cuda() or _is_hip():
-        return "nccl"
-    elif _is_musa():
-        return "mccl"
-    elif _is_mps():
-        return "gloo"
-    elif _is_npu():
-        return "hccl"
-    else:
-        raise NotImplementedError(
-            "No Accelerators(AMD/NV/MTT GPU, AMD MI instinct accelerators) available"
-        )
+    return get_distributed_backend()
 
 def get_platform() -> str:
     if _is_cuda():
@@ -161,6 +279,8 @@ def get_platform() -> str:
         return "rocm"
     elif _is_musa():
         return "musa"
+    elif _is_xpu():
+        return "xpu"
     elif _is_mps():
         return "mps"
     elif _is_npu():
@@ -354,7 +474,7 @@ class PackagesEnvChecker:
 
 
     def check_long_ctx_attn(self):
-        if not (torch.cuda.is_available() or _is_npu()):
+        if not (torch.cuda.is_available() or _is_npu() or _is_xpu()):
             return False
         try:
             from yunchang import (

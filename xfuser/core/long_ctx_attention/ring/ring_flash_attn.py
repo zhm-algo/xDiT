@@ -8,10 +8,16 @@ from xfuser.core.long_ctx_attention import xFuserLongContextAttention
 from xfuser.core.cache_manager.cache_manager import get_cache_manager
 import xfuser.envs as envs
 
-if torch.cuda.is_available() or envs._is_npu():
-    from yunchang.ring.utils import RingComm, update_out_and_lse
-    from yunchang.ring.ring_flash_attn import RingFlashAttnFunc
-    from yunchang.kernels import select_flash_attn_impl, AttnType
+if torch.cuda.is_available() or envs._is_npu() or envs._is_xpu():
+    try:
+        from yunchang.ring.utils import RingComm, update_out_and_lse
+        from yunchang.ring.ring_flash_attn import RingFlashAttnFunc
+        from yunchang.kernels import select_flash_attn_impl, AttnType
+    except ImportError:
+        RingComm = object
+        RingFlashAttnFunc = object
+        AttnType = None
+        select_flash_attn_impl = None
 else:
     RingComm = object
     RingFlashAttnFunc = object
@@ -115,6 +121,11 @@ def xdit_ring_flash_attn_forward(
     k_descale=None,
     v_descale=None,
 ):
+    if select_flash_attn_impl is None:
+        raise RuntimeError(
+            "yunchang/flash-attn ring attention backend is unavailable. "
+            "Please install compatible yunchang + flash-attn, or use SDPA attention."
+        )
     is_joint = False
     if (joint_tensor_key is not None and 
         joint_tensor_value is not None):

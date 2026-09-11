@@ -7,13 +7,19 @@ from xfuser.core.long_ctx_attention import xFuserLongContextAttention
 from xfuser.core.cache_manager.cache_manager import get_cache_manager
 import xfuser.envs as envs
 
-if torch.cuda.is_available() or envs._is_npu():
-    from yunchang.ring.utils import RingComm, update_out_and_lse, update_npu_out
-    from yunchang.ring.ring_npu_flash_attn import RingNpuFlashAttnFunc
-    from yunchang.kernels import select_flash_attn_impl, AttnType
+if torch.cuda.is_available() or envs._is_npu() or envs._is_xpu():
+    try:
+        from yunchang.ring.utils import RingComm, update_out_and_lse, update_npu_out
+        from yunchang.ring.ring_npu_flash_attn import RingNpuFlashAttnFunc
+        from yunchang.kernels import select_flash_attn_impl, AttnType
+    except ImportError:
+        RingComm = object
+        RingNpuFlashAttnFunc = object
+        AttnType = None
+        select_flash_attn_impl = None
 else:
     RingComm = object
-    RingNPUFlashAttnFunc = object
+    RingNpuFlashAttnFunc = object
     AttnType = None
     select_flash_attn_impl = None
 
@@ -41,6 +47,11 @@ def xdit_ring_npu_flash_attn_forward(
         joint_tensor_value=None,
         joint_strategy="none",
 ):
+    if select_flash_attn_impl is None:
+        raise RuntimeError(
+            "yunchang ring NPU/XPU attention backend is unavailable. "
+            "Please install a compatible yunchang build."
+        )
     is_joint = False
     if (joint_tensor_key is not None and
             joint_tensor_value is not None):

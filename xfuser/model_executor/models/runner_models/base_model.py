@@ -11,6 +11,7 @@ import diffusers
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import load_image, export_to_video
 import numpy as np
+import xfuser.envs as envs
 from xfuser.compat import is_diffusers_import_error
 from xfuser.config import xFuserArgs
 from xfuser.envs import (
@@ -682,9 +683,10 @@ class xFuserModel(abc.ABC):
                 warmup_args["prompt"] = warmup_args["prompt"][: self.config.batch_size]
             self._run_warmup_calls(warmup_args)
 
-        inference_start = torch.cuda.Event(enable_timing=True)
-        inference_end = torch.cuda.Event(enable_timing=True)
-        torch.cuda.synchronize()
+        event_class = envs.get_device_event_class()
+        inference_start = event_class(enable_timing=True)
+        inference_end = event_class(enable_timing=True)
+        envs.synchronize()
 
         inference_start.record()
         for iteration in range(self.config.num_iterations):
@@ -699,7 +701,7 @@ class xFuserModel(abc.ABC):
                 log(f"Iteration {iteration + 1} completed in {timing:.2f}s")
 
         inference_end.record()
-        torch.cuda.synchronize()
+        envs.synchronize()
 
         output = self._gather_dp_outputs(output)
 
@@ -852,10 +854,11 @@ class xFuserModel(abc.ABC):
         self.prepare_run(input_args)
         replica = get_model_replica_group()
 
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
+        event_class = envs.get_device_event_class()
+        start = event_class(enable_timing=True)
+        end = event_class(enable_timing=True)
 
-        torch.cuda.synchronize()
+        envs.synchronize()
         replica.barrier()     # aligns all ranks in the replica as closely as possible
 
         start.record()

@@ -6,15 +6,17 @@ import torch.distributed
 
 import xfuser.envs as envs
 
-if torch.cuda.is_available() or envs._is_npu():
-    from yunchang import LongContextAttention
+if torch.cuda.is_available() or envs._is_npu() or envs._is_xpu():
     try:
+        from yunchang import LongContextAttention
         from yunchang.kernels import AttnType
+        from yunchang.comm.all_to_all import SeqAllToAll4D
+        from yunchang.globals import HAS_SPARSE_SAGE_ATTENTION
     except ImportError:
-        raise ImportError("Please install yunchang 0.6.0 or later")
-
-    from yunchang.comm.all_to_all import SeqAllToAll4D
-    from yunchang.globals import HAS_SPARSE_SAGE_ATTENTION
+        LongContextAttention = object
+        AttnType = None
+        SeqAllToAll4D = None
+        HAS_SPARSE_SAGE_ATTENTION = False
 else:
     LongContextAttention = object
     AttnType = None
@@ -60,8 +62,13 @@ class xFuserLongContextAttention(LongContextAttention):
 
         # A workaround to allow running xDiT without having yunchang installed
         # while still supporting AttnType.FA as the default value for legacy reasons
-        if attn_type is None:
+        if attn_type is None and AttnType is not None:
             attn_type = AttnType.FA
+        if LongContextAttention is object or AttnType is None:
+            raise RuntimeError(
+                "Long-context attention requires a compatible yunchang installation. "
+                "Please install yunchang>=0.6.0 or disable long-context attention."
+            )
 
         super().__init__(
             scatter_idx=scatter_idx,
@@ -89,7 +96,7 @@ class xFuserLongContextAttention(LongContextAttention):
                 raise RuntimeError("Sparse Sage attention does not support ring degree > 1.")
 
         self.attn_processor = attn_processor
-        if attn_type == AttnType.NPU:
+        if AttnType is not None and attn_type == AttnType.NPU:
             from xfuser.core.long_ctx_attention.ring import xdit_ring_npu_flash_attn_func
             self.ring_attn_fn = xdit_ring_npu_flash_attn_func
         else:

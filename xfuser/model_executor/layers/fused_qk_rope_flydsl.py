@@ -459,7 +459,7 @@ if _HAS_FLYDSL:
 def _supported(query, key, cos) -> bool:
     if not _HAS_FLYDSL:
         return False
-    if not query.is_cuda:
+    if query.device.type != "cuda":
         return False
     if query.shape != key.shape or query.dtype != key.dtype:
         return False

@@ -41,6 +41,7 @@ from xfuser.model_executor.layers import xFuserLayerBaseWrapper
 from xfuser.model_executor.layers import xFuserLayerWrappersRegister
 from xfuser.logger import init_logger
 from xfuser.compat import version_at_least
+import xfuser.envs as envs
 from xfuser.envs import PACKAGES_CHECKER
 
 if version_at_least(torch.__version__, "2.5.0"):
@@ -56,11 +57,19 @@ HAS_LONG_CTX_ATTN = env_info["has_long_ctx_attn"]
 HAS_FLASH_ATTN = env_info["has_flash_attn"]
 
 if HAS_LONG_CTX_ATTN:
-    from yunchang.kernels import AttnType
+    try:
+        from yunchang.kernels import AttnType
+    except ImportError:
+        HAS_LONG_CTX_ATTN = False
+        AttnType = None
+        logger.warning(
+            'yunchang is installed but misses `yunchang.kernels.AttnType`; '
+            "falling back to PyTorch SDPA attention."
+        )
 
 
 def is_v100():
-    if not torch.cuda.is_available():
+    if envs.get_device_type() != "cuda" or not torch.cuda.is_available():
         return False
     device_name = torch.cuda.get_device_name(torch.cuda.current_device())
     return "V100" in device_name

@@ -6,23 +6,11 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from torch.cuda import manual_seed as device_manual_seed
-from torch.cuda import manual_seed_all as device_manual_seed_all
 from diffusers import DiffusionPipeline
 import torch.distributed
 
-try:
-    import torch_musa
-    from torch_musa.core.random import manual_seed as device_manual_seed
-    from torch_musa.core.random import manual_seed_all as device_manual_seed_all
-except ModuleNotFoundError:
-    pass
-
 import xfuser.envs as envs
 from xfuser.envs import PACKAGES_CHECKER
-if envs._is_npu():
-    from torch.npu import manual_seed as device_manual_seed
-    from torch.npu import manual_seed_all as device_manual_seed_all
 
 from xfuser.core.distributed.attention_backend import (
     AITER_LOW_PRECISION_BACKENDS,
@@ -60,8 +48,12 @@ def set_random_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    device_manual_seed(seed)
-    device_manual_seed_all(seed)
+    device_module = envs.get_torch_device_module()
+    if device_module is not None:
+        if hasattr(device_module, "manual_seed"):
+            device_module.manual_seed(seed)
+        if hasattr(device_module, "manual_seed_all"):
+            device_module.manual_seed_all(seed)
 
 
 class RuntimeState(metaclass=ABCMeta):
@@ -1142,4 +1134,3 @@ def initialize_runtime_state(pipeline: Optional[DiffusionPipeline] = None, engin
         _RUNTIME = UnetRuntimeState(pipeline=pipeline, config=engine_config)
     elif not pipeline:
         _RUNTIME = ExternalRuntimeState()
-

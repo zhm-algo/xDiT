@@ -3,6 +3,7 @@ import os
 import gc
 import logging
 from typing import Tuple, Any
+import xfuser.envs as envs
 
 def setup_logging():
     logging.basicConfig(
@@ -90,10 +91,10 @@ class xFuserModelRunner:
     def cleanup(self) -> None:
         """ Cleanup resources after model execution """
         torch.compiler.reset()
-        torch.cuda.synchronize()
+        envs.synchronize()
         del self.model.pipe
         gc.collect()
-        torch.cuda.empty_cache()
+        envs.empty_cache()
         get_runtime_state().destroy_distributed_env()
         log("Cleaned up resources.")
 

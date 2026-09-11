@@ -191,6 +191,27 @@ pip install -e .
 pip install -e ".[flash-attn]"
 ```
 
+### 2.1 Intel XPU (torch.xpu + oneCCL)
+
+xDiT can run on Intel GPU through `torch.xpu` + Intel Extension for PyTorch + oneCCL.
+
+```bash
+pip install intel-extension-for-pytorch oneccl_bind_pt
+export XDIT_DEVICE=xpu
+export CCL_PROCESS_LAUNCHER=none
+export CCL_ATL_TRANSPORT=ofi
+```
+
+Single node example (`torchrun`):
+
+```bash
+torchrun --nproc_per_node=2 examples/flux2_example.py \
+  --model /path/to/flux2 \
+  --prompt "A cute robot"
+```
+
+Multi-node setups can use `mpirun` with the same oneCCL env vars.
+
 Note that we use two self-maintained packages:
 
 1. [yunchang](https://github.com/feifeibear/long-context-attention)
